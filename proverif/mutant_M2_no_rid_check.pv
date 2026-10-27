@@ -1,0 +1,146 @@
+(* ======================================================================
+   TBG: post-quantum transparent break-glass -- symbolic model, (t,n) = (2,3)
+   Manuscript Section 5.4.
+
+   Abstractions (state these in the paper):
+   - ML-KEM-768 + HKDF + AES-GCM envelopes  -> ideal public-key encryption
+   - ML-DSA-65                               -> ideal signature
+   - AES-256-GCM on the record               -> ideal symmetric encryption
+   - Shamir (2,3) sharing                    -> share constructor + reconstruction
+                                                rules for every pair of distinct indices
+   - RFC 9162 Merkle log                     -> hash chain: a tree head is
+                                                hchain(previous_head, leaf); the
+                                                agent checks the request is the leaf
+                                                committed by the head it is shown.
+     Fork-consistency (consistency proofs, gossip) and freshness/replay windows
+     are NOT modelled; they are covered by tests E5/E6 and stated as limitations.
+   - Log maintainer M is untrusted: its signing key is given to the attacker.
+   - Agent 3 is corrupted: its decapsulation and signing keys are public.
+   ====================================================================== *)
+
+free c: channel.
+
+type skey.   type pkey.
+type sskey.  type spkey.
+type key.    type idx.
+
+const i1, i2, i3: idx.
+
+(* KEM-DEM envelopes, abstracted as public-key encryption *)
+fun pk(skey): pkey.
+fun aenc(bitstring, pkey): bitstring.
+reduc forall m: bitstring, k: skey; adec(aenc(m, pk(k)), k) = m.
+
+(* signatures *)
+fun spk(sskey): spkey.
+fun sign(bitstring, sskey): bitstring.
+reduc forall m: bitstring, k: sskey; checksign(sign(m, k), spk(k)) = m.
+
+(* record encryption *)
+fun senc(bitstring, key): bitstring.
+reduc forall m: bitstring, k: key; sdec(senc(m, k), k) = m.
+
+(* Shamir (2,3): any two distinct shares of the same polynomial give the key *)
+fun sh(key, bitstring, idx): bitstring.
+reduc
+  forall k: key, r: bitstring; rec(sh(k, r, i1), sh(k, r, i2)) = k;
+  forall k: key, r: bitstring; rec(sh(k, r, i2), sh(k, r, i1)) = k;
+  forall k: key, r: bitstring; rec(sh(k, r, i1), sh(k, r, i3)) = k;
+  forall k: key, r: bitstring; rec(sh(k, r, i3), sh(k, r, i1)) = k;
+  forall k: key, r: bitstring; rec(sh(k, r, i2), sh(k, r, i3)) = k;
+  forall k: key, r: bitstring; rec(sh(k, r, i3), sh(k, r, i2)) = k.
+
+(* log: hash chain of requests; hchain is one-way *)
+fun hchain(bitstring, bitstring): bitstring.
+
+(* request r = (rid, ek_d, nonce); data so it can be parsed *)
+fun mkreq(bitstring, pkey, bitstring): bitstring [data].
+(* envelope payload binds the share to its record id *)
+fun shpay(bitstring, bitstring): bitstring [data].
+(* approval message signed by an agent *)
+fun appr(bitstring, bitstring): bitstring [data].
+
+(* ---------------------------------------------------------------- events *)
+event Released(idx, bitstring, bitstring).      (* agent i, request, head *)
+event ApprovalVerified(idx, bitstring, bitstring).
+event Recovered(bitstring).                     (* honest clinician recovered rid *)
+
+(* the record key and (public) identifier of the protected record *)
+free kRecord: key [private].
+free ridX: bitstring.
+
+(* ---------------------------------------------------------------- queries *)
+
+(* Q1 secrecy/transparency: the attacker learns the record key only if an
+   honest agent released a share for a request that names THIS record and is
+   committed by the signed head the agent checked *)
+query ekd: pkey, nn: bitstring, p: bitstring;
+  attacker(kRecord) ==>
+    event(Released(i1, mkreq(ridX, ekd, nn), hchain(p, mkreq(ridX, ekd, nn)))) ||
+    event(Released(i2, mkreq(ridX, ekd, nn), hchain(p, mkreq(ridX, ekd, nn)))).
+
+(* Q2 non-frameability: an approval attributed to an honest agent and
+   accepted by an auditor was produced by that agent *)
+query rq: bitstring, h: bitstring;
+  event(ApprovalVerified(i1, rq, h)) ==> event(Released(i1, rq, h)).
+query rq: bitstring, h: bitstring;
+  event(ApprovalVerified(i2, rq, h)) ==> event(Released(i2, rq, h)).
+
+(* Q3 sanity: an honest break-glass run can complete
+   (ProVerif reports "not event(Recovered(...)) is false" when it is reachable) *)
+query rid: bitstring; event(Recovered(rid)).
+
+(* ---------------------------------------------------------------- processes *)
+
+(* honest trustee agent i *)
+let Agent(i: idx, dk: skey, ssk: sskey, spkM: spkey) =
+  in(c, (env: bitstring, rq: bitstring, p: bitstring, sth: bitstring));
+  let mkreq(rid, ekd, nn) = rq in
+  let h = hchain(p, rq) in
+  if checksign(sth, spkM) = h then          (* head signed by the log maintainer *)
+  let shpay(rid2, s) = adec(env, dk) in     (* this agent's share *)
+  (* MUTANT M2: record-id binding check removed *)
+  event Released(i, rq, h);
+  out(c, (aenc(s, ekd), sign(appr(rq, h), ssk))).
+
+(* honest clinician workstation requesting break-glass for record rid *)
+let Clinician(rid: bitstring, ct: bitstring) =
+  new dkd: skey;
+  new nn: bitstring;
+  let rq = mkreq(rid, pk(dkd), nn) in
+  out(c, rq);                               (* submitted to the (attacker-run) log *)
+  in(c, (f1: bitstring, f2: bitstring));
+  let s1 = adec(f1, dkd) in
+  let s2 = adec(f2, dkd) in
+  let k = rec(s1, s2) in
+  let m = sdec(ct, k) in
+  event Recovered(rid).
+
+(* auditor checking an approval signature from agent i *)
+let Auditor(i: idx, vk: spkey) =
+  in(c, (rq: bitstring, h: bitstring, sg: bitstring));
+  if checksign(sg, vk) = appr(rq, h) then
+  event ApprovalVerified(i, rq, h).
+
+process
+  (* untrusted log maintainer *)
+  new skM: sskey; out(c, skM); out(c, spk(skM));
+  (* agents *)
+  new dk1: skey; new dk2: skey; new dk3: skey;
+  new ss1: sskey; new ss2: sskey; new ss3: sskey;
+  out(c, (pk(dk1), pk(dk2), pk(dk3), spk(ss1), spk(ss2), spk(ss3)));
+  out(c, (dk3, ss3));                       (* agent 3 corrupted *)
+  (* one protected record *)
+  new r: bitstring; new data: bitstring;
+  let ct = senc(data, kRecord) in
+  out(c, ct);
+  out(c, (aenc(shpay(ridX, sh(kRecord, r, i1)), pk(dk1)),
+          aenc(shpay(ridX, sh(kRecord, r, i2)), pk(dk2)),
+          aenc(shpay(ridX, sh(kRecord, r, i3)), pk(dk3))));
+  (
+    (!Agent(i1, dk1, ss1, spk(skM))) |
+    (!Agent(i2, dk2, ss2, spk(skM))) |
+    (!Clinician(ridX, ct)) |
+    (!Auditor(i1, spk(ss1))) |
+    (!Auditor(i2, spk(ss2)))
+  )

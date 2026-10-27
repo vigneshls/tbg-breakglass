@@ -1,0 +1,16 @@
+{
+  "E5": {
+    "clean_audit_passes": true,
+    "modified_leaf_detected": true,
+    "deleted_leaf_detected": true,
+    "reordered_leaves_detected": true,
+    "equivocation_same_size_detected": true
+  },
+  "E6": {
+    "unlogged_request_shares_released": 0,
+    "t_minus_1_agents_recover": false,
+    "replay_rejected": true,
+    "stale_rejected": true,
+    "forked_log_rejected": true
+  }
+}

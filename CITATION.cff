@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use this software or data, please cite it as below."
+title: "TBG: Post-Quantum Transparent Break-Glass for Electronic Medical Records (code, data and ProVerif model)"
+version: 1.0.0
+date-released: 2026-10-27
+license: MIT
+authors:
+  - family-names: Vignesh
+    given-names: L. S.
+    orcid: "https://orcid.org/0000-0003-3084-4821"
+    affiliation: "Nadar Saraswathi College of Engineering and Technology, Theni, India"
+  # add co-authors here (family-names, given-names, orcid, affiliation)
+repository-code: "https://github.com/vigneshls/tbg-breakglass"
+keywords:
+  - post-quantum cryptography
+  - break-glass access
+  - transparent decryption
+  - electronic medical records
+  - ML-KEM
+  - ML-DSA

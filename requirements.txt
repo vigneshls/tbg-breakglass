@@ -1,0 +1,6 @@
+cryptography>=42
+kyber-py==1.2.0
+dilithium-py==1.5.1
+pytest>=8
+psutil>=5.9
+# liboqs-python is installed separately (see README): it needs the liboqs C library.
